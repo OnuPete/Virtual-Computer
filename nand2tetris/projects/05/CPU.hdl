@@ -1,0 +1,121 @@
+// This file is part of www.nand2tetris.org
+// and the book "The Elements of Computing Systems"
+// by Nisan and Schocken, MIT Press.
+// File name: projects/05/CPU.hdl
+
+/**
+ * The Hack CPU (Central Processing unit), consisting of an ALU,
+ * two registers named A and D, and a program counter named PC.
+ * The CPU is designed to fetch and execute instructions written in 
+ * the Hack machine language. In particular, functions as follows:
+ * Executes the inputted instruction according to the Hack machine 
+ * language specification. The D and A in the language specification
+ * refer to CPU-resident registers, while M refers to the external
+ * memory location addressed by A, i.e. to Memory[A]. The inM input 
+ * holds the value of this location. If the current instruction needs 
+ * to write a value to M, the value is placed in outM, the address 
+ * of the target location is placed in the addressM output, and the 
+ * writeM control bit is asserted. (When writeM==0, any value may 
+ * appear in outM). The outM and writeM outputs are combinational: 
+ * they are affected instantaneously by the execution of the current 
+ * instruction. The addressM and pc outputs are clocked: although they 
+ * are affected by the execution of the current instruction, they commit 
+ * to their new values only in the next time step. If reset==1 then the 
+ * CPU jumps to address 0 (i.e. pc is set to 0 in next time step) rather 
+ * than to the address resulting from executing the current instruction. 
+ */
+
+CHIP CPU {
+
+    IN  inM[16],         // M value input  (M = contents of RAM[A])
+        instruction[16], // Instruction for execution
+        reset;           // Signals whether to re-start the current
+                         // program (reset==1) or continue executing
+                         // the current program (reset==0).
+
+    OUT outM[16],        // M value output
+        writeM,          // Write to M? 
+        addressM[15],    // Address in data memory (of M)
+        pc[15];          // address of next instruction
+
+    PARTS:
+    // Put your code here:
+    //A: instruction[16] = 0 (0vvvvvvvvvvvvvvv)
+    //C: instruction[16] = 1 (111accccccdddjjj)
+    //     cccccc
+    //   0 101010
+    //   1 111111
+    //  -1 111010
+    //   D 001100
+    //   A 110000 M
+    //  !D 001101
+    //  !A 110001 !M
+    //  -D 001111
+    //  -A 110011 -M
+    // D+1 011111
+    // A+1 110111 M+1
+    // D-1 001110
+    // A-1 110010 M-1
+    // D+A 000010 D+M
+    // D-A 010011 D-M
+    // A-D 000111 M-D
+    // D&A 000000 D&M
+    // D|A 010101 D|M
+
+    // ddd
+    // 000 null The value is not stored anywhere
+    // 001 M Memory[A] (memory register addressed by A)
+    // 010 D D register
+    // 011 MD Memory[A] and D register
+    // 100 A A register
+    // 101 AM A register and Memory[A]
+    // 110 AD A register and D register
+    // 111 AMD A register, Memory[A], and D register
+
+    // jjj
+    // 000 null No jump
+    // 001 JGT If out > 0 jump
+    // 010 JEQ If out = 0 jump
+    // 011 JGE If out >= 0 jump
+    // 100 JLT If out < 0 jump
+    // 101 JNE If out != 0 jump
+    // 110 JLE If out <= 0 jump
+    // 111 JMP Jump
+    // Check the op code if A instruction or C intruction
+    Nand (a = true, b = instruction[15], out = isA);
+    // If A instrunction, load A
+    // Else Load output of ALU
+    Mux16 (a[0..15] = ALUout, b[0..15] = instruction[0..15], sel = isA, out[0..15] = toA);
+    // Load A whenever its A instruction or if used in C intruction
+    And (a = instruction[15], b = instruction[5], out = instA);
+    Or (a = isA, b = instA, out = loadA);
+    ARegister (in[0..15] = toA, load = loadA, out[0..15] = AReg, out[0..14] = addressM[0..14]);
+    // Check wheter using M or A register
+    And (a = instruction[15], b = instruction[12], out = isM);
+    Mux16 (a[0..15] = AReg, b[0..15] = inM[0..15], sel = isM, out = ALUin1);
+    // Check to see if using D register in instruction adn if so, load it
+    And (a = instruction[15], b = instruction[4], out = loadD);
+    DRegister (in[0..15] = ALUout, load = loadD, out[0..15] = ALUin0);
+    // ALU logic
+    // X = D register
+    // Y = A/M register
+    ALU (x[0..15] = ALUin0, y[0..15] = ALUin1, zx = instruction[11], nx = instruction[10], zy = instruction[9], ny = instruction[8], f = instruction[7], no = instruction[6], out[0..15] = ALUout, out[0..15] = outM[0..15], zr = isZero, ng = isNeg);
+    // Write to Ram?
+    And (a = instruction[15], b = instruction[3], out = writeM);
+    // Jump Logic
+    // out < 0
+    And (a = instruction[2], b = isNeg, out = lessThan);
+    // out = 0
+    And (a = instruction[1], b = isZero, out = equal);
+    Or (a = isZero, b = isNeg, out = notPos);
+    Not (in = notPos, out = isPos);
+    // out > 0
+    And (a = instruction[0], b = isPos, out = greaterThan);
+    Or8Way(in[2] = lessThan, in[1] = equal, in[0] = greaterThan, out = jump);
+    And (a = instruction[15], b = jump, out = loadJump);
+    // Program Counter. 
+    // If reset = 1, out = 0,
+    // Else If Jump, out = A Register
+    // Else Increment Counter
+    PC (in[0..15] = AReg, load = loadJump, inc = true, reset = reset, out[0..14] = pc[0..14]);
+}
